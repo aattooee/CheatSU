@@ -1,0 +1,14 @@
+#!/bin/bash
+export PATH=$(pwd)/.bin:/path/to/clang/bin:$PATH  ##e.g. $GKI_ROOT/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin
+export MAKE=/path/to/make                         ##e.g. $GKI_ROOT/prebuilts/build-tools/linux-x86/bin/make
+export KDIR=/path/to/prebuilt/kernel              ##e.g. $GKI_ROOT/out/android12-5.10/common
+export EXARGS="LLVM=1 LLVM_IAS=1"
+export ARCH=arm64
+export CROSS_COMPILE=aarch64-linux-gnu-
+cd src
+make clean
+make all
+cd ..
+llvm-strip-15 -d product/kernelsu.ko
+rm kernelsu_patched*.img
+ksud boot-patch -b originboot/boot.img --kmi android12-5.10  -m product/kernelsu.ko -o product
