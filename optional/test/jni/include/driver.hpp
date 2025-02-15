@@ -1,7 +1,10 @@
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
-
+#include "comm.h"
+#include <stdio.h>
+#include <memory.h>
+#include <unistd.h>
 #define CMD_GET_CHEAT_HANDLE 14
 class c_driver
 {
@@ -9,28 +12,7 @@ private:
 	int fd;
 	pid_t pid;
 
-	typedef struct _COPY_MEMORY
-	{
-		pid_t pid;
-		uintptr_t addr;
-		void *buffer;
-		size_t size;
-	} COPY_MEMORY, *PCOPY_MEMORY;
-
-	typedef struct _MODULE_BASE
-	{
-		pid_t pid;
-		char *name;
-		uintptr_t base;
-	} MODULE_BASE, *PMODULE_BASE;
-
-	enum OPERATIONS
-	{
-		OP_INIT_KEY = 0x900,
-		OP_READ_MEM = 0x901,
-		OP_WRITE_MEM = 0x902,
-		OP_MODULE_BASE = 0x903,
-	};
+	
 
 public:
 	c_driver()
@@ -63,7 +45,24 @@ public:
 		cm.addr = addr;
 		cm.buffer = buffer;
 		cm.size = size;
+		cm.offsets_count = 0;
+		fflush(stdout);
+		if (ioctl(fd, OP_READ_MEM, &cm) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
+	bool read_with_offsets(uintptr_t addr, void *buffer, size_t size,size_t offsets_count,uintptr_t offsets[])
+	{
+		COPY_MEMORY cm;
 
+		cm.pid = this->pid;
+		cm.addr = addr;
+		cm.buffer = buffer;
+		cm.size = size;
+		cm.offsets_count = offsets_count;
+		memcpy(cm.offsets,offsets,sizeof(uintptr_t)*offsets_count);
 		if (ioctl(fd, OP_READ_MEM, &cm) != 0)
 		{
 			return false;
@@ -92,6 +91,14 @@ public:
 	{
 		T res;
 		if (this->read(addr, &res, sizeof(T)))
+			return res;
+		return {};
+	}
+	template <typename T>
+	T read_with_offsets(uintptr_t addr,size_t offsets_count,uintptr_t offsets[])
+	{
+		T res;
+		if (this->read_with_offsets(addr, &res, sizeof(T),offsets_count,offsets))
 			return res;
 		return {};
 	}

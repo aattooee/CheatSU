@@ -2,3 +2,7 @@ build
 product
 originboot/boot.img
 build.sh
+compile_commands.json
+optional/test/jni/.cache/
+optional/test/libs/
+optional/test/obj/

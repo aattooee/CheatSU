@@ -1,1 +1,0 @@
-adb push libs/arm64-v8a/test /data/local/tmp

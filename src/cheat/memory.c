@@ -1,4 +1,6 @@
 #include "memory.h"
+#include "linux/stddef.h"
+#include "linux/types.h"
 #include <linux/tty.h>
 #include <linux/io.h>
 #include <linux/mm.h>
@@ -18,7 +20,6 @@ extern void mmput(struct mm_struct *);
 
 phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 {
-
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pmd_t *pmd;
@@ -29,32 +30,26 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 	uintptr_t page_offset;
 
 	pgd = pgd_offset(mm, va);
-	if (pgd_none(*pgd) || pgd_bad(*pgd))
-	{
+	if (pgd_none(*pgd) || pgd_bad(*pgd)) {
 		return 0;
 	}
 	p4d = p4d_offset(pgd, va);
-	if (p4d_none(*p4d) || p4d_bad(*p4d))
-	{
+	if (p4d_none(*p4d) || p4d_bad(*p4d)) {
 		return 0;
 	}
 	pud = pud_offset(p4d, va);
-	if (pud_none(*pud) || pud_bad(*pud))
-	{
+	if (pud_none(*pud) || pud_bad(*pud)) {
 		return 0;
 	}
 	pmd = pmd_offset(pud, va);
-	if (pmd_none(*pmd))
-	{
+	if (pmd_none(*pmd)) {
 		return 0;
 	}
 	pte = pte_offset_kernel(pmd, va);
-	if (pte_none(*pte))
-	{
+	if (pte_none(*pte)) {
 		return 0;
 	}
-	if (!pte_present(*pte))
-	{
+	if (!pte_present(*pte)) {
 		return 0;
 	}
 	// 页物理地址
@@ -67,7 +62,6 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 #else
 phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 {
-
 	pgd_t *pgd;
 	pmd_t *pmd;
 	pte_t *pte;
@@ -77,27 +71,22 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 	uintptr_t page_offset;
 
 	pgd = pgd_offset(mm, va);
-	if (pgd_none(*pgd) || pgd_bad(*pgd))
-	{
+	if (pgd_none(*pgd) || pgd_bad(*pgd)) {
 		return 0;
 	}
 	pud = pud_offset(pgd, va);
-	if (pud_none(*pud) || pud_bad(*pud))
-	{
+	if (pud_none(*pud) || pud_bad(*pud)) {
 		return 0;
 	}
 	pmd = pmd_offset(pud, va);
-	if (pmd_none(*pmd))
-	{
+	if (pmd_none(*pmd)) {
 		return 0;
 	}
 	pte = pte_offset_kernel(pmd, va);
-	if (pte_none(*pte))
-	{
+	if (pte_none(*pte)) {
 		return 0;
 	}
-	if (!pte_present(*pte))
-	{
+	if (!pte_present(*pte)) {
 		return 0;
 	}
 	// 页物理地址
@@ -109,7 +98,6 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 }
 #endif
 
-
 #ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
 static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
@@ -117,27 +105,30 @@ static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
 }
 #endif
 
-
-
-bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
+bool read_physical_address(phys_addr_t pa, void *buffer, size_t size,
+			   bool to_kernel)
 {
 	void *mapped;
 
-	if (!pfn_valid(__phys_to_pfn(pa)))
-	{
+	if (!pfn_valid(__phys_to_pfn(pa))) {
 		return false;
 	}
-	if (!valid_phys_addr_range(pa, size))
-	{
+	if (!valid_phys_addr_range(pa, size)) {
 		return false;
 	}
 	mapped = ioremap_cache(pa, size);
-	if (!mapped)
-	{
+	if (!mapped) {
 		return false;
 	}
-	if (copy_to_user(buffer, mapped, size))
-	{
+	if (to_kernel) {
+		if (copy_from_kernel_nofault(buffer, mapped, size)) {
+			iounmap(mapped);
+			return false;
+		}
+		iounmap(mapped);
+		return true;
+	}
+	if (copy_to_user(buffer, mapped, size)) {
 		iounmap(mapped);
 		return false;
 	}
@@ -149,21 +140,17 @@ bool write_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
 	void *mapped;
 
-	if (!pfn_valid(__phys_to_pfn(pa)))
-	{
+	if (!pfn_valid(__phys_to_pfn(pa))) {
 		return false;
 	}
-	if (!valid_phys_addr_range(pa, size))
-	{
+	if (!valid_phys_addr_range(pa, size)) {
 		return false;
 	}
 	mapped = ioremap_cache(pa, size);
-	if (!mapped)
-	{
+	if (!mapped) {
 		return false;
 	}
-	if (copy_from_user(mapped, buffer, size))
-	{
+	if (copy_from_user(mapped, buffer, size)) {
 		iounmap(mapped);
 		return false;
 	}
@@ -171,73 +158,74 @@ bool write_physical_address(phys_addr_t pa, void *buffer, size_t size)
 	return true;
 }
 
-bool read_process_memory(
-	pid_t pid,
-	uintptr_t addr,
-	void *buffer,
-	size_t size)
+bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size,
+			 size_t offsets_count, uintptr_t *offsets)
 {
-
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct pid *pid_struct;
 	phys_addr_t pa;
+	int current_offset_idx = 0;
 
 	pid_struct = find_get_pid(pid);
-	if (!pid_struct)
-	{
+	if (!pid_struct) {
 		return false;
 	}
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
-	if (!task)
-	{
+	if (!task) {
 		return false;
 	}
 	mm = get_task_mm(task);
-	if (!mm)
-	{
+	if (!mm) {
 		return false;
+	}
+
+	while (current_offset_idx+1 < offsets_count) {
+		addr += offsets[current_offset_idx];
+		pa = translate_linear_address(mm, addr);
+		if (!pa) {
+			goto failed;
+		}
+		if (!read_physical_address(pa, &addr, sizeof(addr), true)) {
+			goto failed;
+		}
+		current_offset_idx++;
+	}
+	if(offsets_count != 0)
+		addr +=offsets[current_offset_idx];
+	pa = translate_linear_address(mm, addr);
+	if (!pa) {
+		goto failed;
 	}
 	mmput(mm);
-	pa = translate_linear_address(mm, addr);
-	if (!pa)
-	{
-		return false;
-	}
-	return read_physical_address(pa, buffer, size);
+	return read_physical_address(pa, buffer, size, false);
+failed:
+	mmput(mm);
+	return false;
 }
 
-bool write_process_memory(
-	pid_t pid,
-	uintptr_t addr,
-	void *buffer,
-	size_t size)
+bool write_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size)
 {
-
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct pid *pid_struct;
 	phys_addr_t pa;
 
 	pid_struct = find_get_pid(pid);
-	if (!pid_struct)
-	{
+	if (!pid_struct) {
 		return false;
 	}
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
-	if (!task)
-	{
+	if (!task) {
 		return false;
 	}
 	mm = get_task_mm(task);
-	if (!mm)
-	{
+	if (!mm) {
 		return false;
 	}
 	mmput(mm);
 	pa = translate_linear_address(mm, addr);
-	if (!pa)
-	{
+	if (!pa) {
 		return false;
 	}
 	return write_physical_address(pa, buffer, size);
