@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "asm/page-def.h"
 #include "linux/stddef.h"
 #include "linux/types.h"
 #include <linux/tty.h>
@@ -166,7 +167,8 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size,
 	struct pid *pid_struct;
 	phys_addr_t pa;
 	int current_offset_idx = 0;
-
+	size_t bytes_could_read = 0;
+	uintptr_t page_offset;
 	pid_struct = find_get_pid(pid);
 	if (!pid_struct) {
 		return false;
@@ -180,7 +182,7 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size,
 		return false;
 	}
 
-	while (current_offset_idx+1 < offsets_count) {
+	while (current_offset_idx + 1 < offsets_count) {
 		addr += offsets[current_offset_idx];
 		pa = translate_linear_address(mm, addr);
 		if (!pa) {
@@ -191,14 +193,37 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size,
 		}
 		current_offset_idx++;
 	}
-	if(offsets_count != 0)
-		addr +=offsets[current_offset_idx];
+	if (offsets_count != 0)
+		addr += offsets[current_offset_idx];
 	pa = translate_linear_address(mm, addr);
 	if (!pa) {
 		goto failed;
 	}
+
+	//跨页读取:
+	page_offset = addr & (PAGE_SIZE - 1);
+	bytes_could_read = size>PAGE_SIZE - page_offset?PAGE_SIZE - page_offset:size;
+	while (true) {
+		if (read_physical_address(pa, buffer, bytes_could_read,
+					  false)) {
+			size -= bytes_could_read;
+			if (size == 0)
+				goto success;
+			addr += bytes_could_read;
+			buffer += bytes_could_read;
+
+			pa = translate_linear_address(mm, addr);
+			if (!pa)
+				goto failed;
+			bytes_could_read = size >= PAGE_SIZE ?
+						   PAGE_SIZE :
+						   size;
+		} else
+			goto failed;
+	}
+success:
 	mmput(mm);
-	return read_physical_address(pa, buffer, size, false);
+	return true;
 failed:
 	mmput(mm);
 	return false;
